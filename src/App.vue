@@ -27,7 +27,7 @@ import type { BenchmarkMode, LifeStage, PetType, ProductCategory } from './types
 import { filterProducts, uniqueNeeds } from './utils/productFilters'
 
 const mode = computed<BenchmarkMode>(() =>
-  window.location.pathname.includes('/without-webmcp')
+  new URLSearchParams(window.location.search).get('mode') === 'without-webmcp'
     ? 'without-webmcp'
     : 'with-webmcp',
 )
@@ -243,14 +243,14 @@ function iconComponent(name: 'cart' | 'tool' | 'check'): Component {
         <a
           class="mode-tab"
           :class="{ active: mode === 'with-webmcp' }"
-          href="/with-webmcp"
+          href="?mode=with-webmcp"
         >
           With WebMCP
         </a>
         <a
           class="mode-tab"
           :class="{ active: mode === 'without-webmcp' }"
-          href="/without-webmcp"
+          href="?mode=without-webmcp"
         >
           Without WebMCP
         </a>
