@@ -31,7 +31,7 @@ export function useWebMcpTools(options: UseWebMcpToolsOptions) {
   const errorMessage = ref('')
   const abortController = ref<AbortController | null>(null)
 
-  const isAvailable = computed(() => typeof document.modelContext?.registerTool === 'function')
+  const isAvailable = computed(() => typeof navigator.modelContext?.registerTool === 'function')
 
   function register() {
     cleanup()
@@ -43,7 +43,7 @@ export function useWebMcpTools(options: UseWebMcpToolsOptions) {
     }
 
     if (!isAvailable.value) {
-      statusMessage.value = 'document.modelContext unavailable'
+      statusMessage.value = 'navigator.modelContext unavailable'
       return
     }
 
@@ -53,7 +53,7 @@ export function useWebMcpTools(options: UseWebMcpToolsOptions) {
 
     try {
       tools.forEach((tool) => {
-        document.modelContext?.registerTool(
+        navigator.modelContext?.registerTool(
           {
             name: tool.name,
             description: tool.description,

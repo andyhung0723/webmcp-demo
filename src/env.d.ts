@@ -11,7 +11,7 @@ interface ModelContextRegistration {
   unregister?: () => void
 }
 
-interface Document {
+interface Navigator {
   modelContext?: {
     registerTool: (
       definition: ModelContextToolDefinition,
