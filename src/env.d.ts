@@ -7,16 +7,13 @@ interface ModelContextToolDefinition {
   annotations?: Record<string, unknown>
 }
 
-interface ModelContextRegistration {
-  unregister?: () => void
+
+interface ModelContextTool extends ModelContextToolDefinition {
+  execute: (input: unknown) => unknown | Promise<unknown>
 }
 
 interface Navigator {
   modelContext?: {
-    registerTool: (
-      definition: ModelContextToolDefinition,
-      handler: (input: unknown) => unknown | Promise<unknown>,
-      options?: { signal?: AbortSignal },
-    ) => ModelContextRegistration | void
+    registerTool: (tool: ModelContextTool, options?: { signal?: AbortSignal }) => void
   }
 }

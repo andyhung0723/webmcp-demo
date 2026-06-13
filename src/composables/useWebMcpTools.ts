@@ -59,8 +59,8 @@ export function useWebMcpTools(options: UseWebMcpToolsOptions) {
             description: tool.description,
             inputSchema: tool.inputSchema,
             annotations: tool.annotations,
+            execute: tool.handler,
           },
-          tool.handler,
           { signal: controller.signal },
         )
       })
