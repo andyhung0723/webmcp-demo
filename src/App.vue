@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, reactive, ref, watch } from 'vue'
 import { products, scenario } from './data/products'
+import type { ScenarioConfig } from './types'
 import { useBenchmark } from './composables/useBenchmark'
 import { useWebMcpTools } from './composables/useWebMcpTools'
 import { useCartStore } from './stores/cart'
@@ -60,6 +61,14 @@ const filters = reactive({
 
 const searchActive = computed(() => filters.query.trim().length > 0)
 
+// ---- scenario config (editable from drawer) ----
+const scenarioConfig = ref<ScenarioConfig>({
+  title: scenario.title,
+  prompt: scenario.prompt,
+  expectedProductId: scenario.expectedProductId,
+  expectedQuantity: scenario.expectedQuantity,
+})
+
 // ---- benchmark + WebMCP wiring (real measurement, unchanged contract) ----
 const cartItemsForBenchmark = computed(() =>
   cart.lineItems.map((item) => ({
@@ -71,6 +80,7 @@ const cartItemsForBenchmark = computed(() =>
 const benchmark = useBenchmark({
   mode: mode.value,
   cartItems: cartItemsForBenchmark,
+  scenario: scenarioConfig,
 })
 
 const webMcp = useWebMcpTools({
@@ -199,17 +209,6 @@ const detailTabs = [
   { key: 'review', label: '顧客評價' },
 ] as const
 
-// ---- drawer data (real) ----
-const criteria = [
-  `petType: ${scenario.criteria.petType}`,
-  `category: ${scenario.criteria.category}`,
-  `lifeStage: ${scenario.criteria.lifeStage}`,
-  `need: ${scenario.criteria.needs.join(', ')}`,
-  `max: ${formatTwd(scenario.criteria.maxPrice)}`,
-  `rating ≥ ${scenario.criteria.minRating}`,
-  'inStock: true',
-  `quantity: ${scenario.expectedQuantity}`,
-]
 
 const summaryByMode = computed(() => {
   const modes: BenchmarkMode[] = ['with-webmcp', 'without-webmcp']
@@ -345,7 +344,7 @@ function resetDemo() {
 }
 
 async function copyPrompt() {
-  await navigator.clipboard.writeText(scenario.prompt)
+  await navigator.clipboard.writeText(scenarioConfig.value.prompt)
   copied.value = true
   window.setTimeout(() => (copied.value = false), 1400)
 }
@@ -831,9 +830,8 @@ const sortOptions = [
     <BenchmarkDrawer
       :open="drawerOpen"
       :mode="mode"
-      :scenario-title="scenario.title"
-      :scenario-prompt="scenario.prompt"
-      :criteria="criteria"
+      :scenario-config="scenarioConfig"
+      :products="products"
       :webmcp-status="webMcp.statusMessage.value"
       :webmcp-available="webMcp.isAvailable.value"
       :webmcp-error="webMcp.errorMessage.value"
@@ -850,8 +848,8 @@ const sortOptions = [
       @close="drawerOpen = false"
       @arm="benchmark.arm"
       @reset="resetDemo"
-      @export="benchmark.exportJson"
       @copy="copyPrompt"
+      @update:scenario-config="scenarioConfig = $event"
     />
 
     <!-- toast -->

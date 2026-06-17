@@ -1,15 +1,15 @@
 import { computed, onBeforeUnmount, reactive, ref, watch, type Ref } from 'vue'
-import type { BenchmarkMode, BenchmarkRun, CartItem, ToolCallLog } from '../types'
-import { scenario } from '../data/products'
+import type { BenchmarkMode, BenchmarkRun, CartItem, ScenarioConfig, ToolCallLog } from '../types'
 
 const HISTORY_KEY = 'webmcp-pet-benchmark-runs'
 
 interface UseBenchmarkOptions {
   mode: BenchmarkMode
   cartItems: Ref<CartItem[]>
+  scenario: Ref<ScenarioConfig>
 }
 
-export function useBenchmark({ mode, cartItems }: UseBenchmarkOptions) {
+export function useBenchmark({ mode, cartItems, scenario }: UseBenchmarkOptions) {
   const armed = ref(false)
   const startedAt = ref<number | null>(null)
   const uiActionCount = ref(0)
@@ -112,7 +112,7 @@ export function useBenchmark({ mode, cartItems }: UseBenchmarkOptions) {
     const run: BenchmarkRun = {
       id: `${mode}-${Date.now()}`,
       mode,
-      scenarioId: scenario.id,
+      scenarioId: scenario.value.expectedProductId,
       durationMs: Math.round(completedAtMs - startedAt.value),
       uiActionCount: uiActionCount.value,
       toolCallCount: toolCallCount.value,
@@ -160,10 +160,9 @@ export function useBenchmark({ mode, cartItems }: UseBenchmarkOptions) {
     cartItems,
     (items) => {
       if (!armed.value || startedAt.value === null) return
-      const expectedQuantity =
-        items.find((item) => item.productId === scenario.expectedProductId)
-          ?.quantity ?? 0
-      if (expectedQuantity === scenario.expectedQuantity) complete(true)
+      const { expectedProductId, expectedQuantity } = scenario.value
+      const qty = items.find((item) => item.productId === expectedProductId)?.quantity ?? 0
+      if (qty === expectedQuantity) complete(true)
     },
     { deep: true },
   )

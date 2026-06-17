@@ -28,6 +28,13 @@ export interface CartItem {
   quantity: number
 }
 
+export interface ScenarioConfig {
+  title: string
+  prompt: string
+  expectedProductId: string
+  expectedQuantity: number
+}
+
 export interface BenchmarkScenario {
   id: string
   title: string

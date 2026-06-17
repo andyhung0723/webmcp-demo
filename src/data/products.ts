@@ -8,7 +8,7 @@ export const scenario: BenchmarkScenario = {
   expectedProductId: EXPECTED_PRODUCT_ID,
   expectedQuantity: 1,
   prompt:
-    '請替腸胃敏感的成犬找一款主食，預算 NT$1,200 以下、評分至少 4.6、必須有現貨，需求需包含 sensitive-stomach，然後加入購物車 1 件。',
+    '我家狗腸胃敏感，幫我找一款成犬主食，要有現貨、預算 1200 以內，評分越高越好，加一包到購物車就好。',
   criteria: {
     petType: 'dog',
     category: 'food',
