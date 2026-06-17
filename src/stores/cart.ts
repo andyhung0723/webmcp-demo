@@ -34,6 +34,16 @@ export const useCartStore = defineStore('cart', () => {
     return true
   }
 
+  function update(productId: string, delta: number) {
+    const current = items.value.get(productId) ?? 0
+    const next = current + delta
+    const nextItems = new Map(items.value)
+    if (next <= 0) nextItems.delete(productId)
+    else nextItems.set(productId, next)
+    items.value = nextItems
+    return current !== (nextItems.get(productId) ?? 0)
+  }
+
   function remove(productId: string) {
     const nextItems = new Map(items.value)
     const didRemove = nextItems.delete(productId)
@@ -51,5 +61,5 @@ export const useCartStore = defineStore('cart', () => {
     return items.value.get(productId) ?? 0
   }
 
-  return { items, lineItems, count, total, add, remove, clear, quantityOf }
+  return { items, lineItems, count, total, add, update, remove, clear, quantityOf }
 })

@@ -1,30 +1,30 @@
 <script setup lang="ts">
-import {
-  computed,
-  nextTick,
-  reactive,
-  ref,
-  watch,
-  type Component,
-} from 'vue'
-import {
-  CheckCircle2,
-  Clipboard,
-  PackageCheck,
-  Play,
-  RefreshCw,
-  Search,
-  ShoppingCart,
-  SlidersHorizontal,
-  Trash2,
-  Wrench,
-} from '@lucide/vue'
+import { computed, reactive, ref, watch } from 'vue'
 import { products, scenario } from './data/products'
 import { useBenchmark } from './composables/useBenchmark'
 import { useWebMcpTools } from './composables/useWebMcpTools'
 import { useCartStore } from './stores/cart'
-import type { BenchmarkMode, LifeStage, PetType, ProductCategory } from './types'
 import { filterProducts, uniqueNeeds } from './utils/productFilters'
+import {
+  decorateProduct,
+  formatTwd,
+  needLabel,
+  CATEGORY_LABEL,
+  LIFE_STAGE_LABEL,
+} from './utils/productVisuals'
+import ProductCard from './components/ProductCard.vue'
+import BenchmarkDrawer from './components/BenchmarkDrawer.vue'
+import type {
+  BenchmarkMode,
+  BenchmarkRun,
+  LifeStage,
+  PetType,
+  ProductCategory,
+} from './types'
+
+const FREE_SHIP = 1200
+const SHIPPING_FEE = 60
+const PROMO = '全館滿 NT$1,200 免運 ・ 新會員首購享 9 折'
 
 const mode = computed<BenchmarkMode>(() =>
   new URLSearchParams(window.location.search).get('mode') === 'without-webmcp'
@@ -33,20 +33,34 @@ const mode = computed<BenchmarkMode>(() =>
 )
 
 const cart = useCartStore()
-const selectedProductId = ref(products[0].id)
-const copied = ref(false)
 
+type View = 'shop' | 'product' | 'cart'
+const view = ref<View>('shop')
+const selectedId = ref<string | null>(null)
+const detailTab = ref<'intro' | 'ingredient' | 'feeding' | 'review'>('intro')
+const detailQty = ref(1)
+
+const drawerOpen = ref(false)
+const copied = ref(false)
+const toastMsg = ref('')
+let toastTimer = 0
+
+const searchInput = ref('')
 const filters = reactive({
   query: '',
   petType: 'all' as PetType | 'all',
   category: 'all' as ProductCategory | 'all',
   lifeStage: 'all' as LifeStage | 'all',
   needs: [] as string[],
-  maxPrice: 1600,
+  maxPrice: 2000,
   minRating: 4.0,
   inStockOnly: false,
+  sort: 'recommend' as 'recommend' | 'priceAsc' | 'priceDesc' | 'rating',
 })
 
+const searchActive = computed(() => filters.query.trim().length > 0)
+
+// ---- benchmark + WebMCP wiring (real measurement, unchanged contract) ----
 const cartItemsForBenchmark = computed(() =>
   cart.lineItems.map((item) => ({
     productId: item.productId,
@@ -67,8 +81,9 @@ const webMcp = useWebMcpTools({
   recordToolCall: benchmark.recordToolCall,
 })
 
-const filteredProducts = computed(() =>
-  filterProducts(products, {
+// ---- catalog ----
+const filtered = computed(() => {
+  const list = filterProducts(products, {
     query: filters.query,
     petType: filters.petType,
     category: filters.category,
@@ -77,572 +92,771 @@ const filteredProducts = computed(() =>
     maxPrice: filters.maxPrice,
     minRating: filters.minRating,
     inStockOnly: filters.inStockOnly,
-  }),
+  })
+  const sorted = [...list]
+  if (filters.sort === 'priceAsc') sorted.sort((a, b) => a.price - b.price)
+  else if (filters.sort === 'priceDesc') sorted.sort((a, b) => b.price - a.price)
+  else if (filters.sort === 'rating') sorted.sort((a, b) => b.rating - a.rating)
+  return sorted
+})
+
+const visibleProducts = computed(() => filtered.value.map(decorateProduct))
+
+const selectedProduct = computed(() => {
+  const product = products.find((item) => item.id === selectedId.value)
+  return product ? decorateProduct(product) : null
+})
+
+const relatedProducts = computed(() => {
+  const current = selectedProduct.value
+  if (!current) return []
+  return products
+    .filter((p) => p.petType === current.petType && p.id !== current.id)
+    .slice(0, 4)
+    .map(decorateProduct)
+})
+
+const recommendProducts = computed(() =>
+  products
+    .filter((p) => p.inStock && !cart.items.has(p.id))
+    .slice(0, 3)
+    .map(decorateProduct),
 )
 
-const selectedProduct = computed(
-  () =>
-    products.find((product) => product.id === selectedProductId.value) ??
-    filteredProducts.value[0] ??
-    products[0],
+const cartLines = computed(() =>
+  cart.lineItems
+    .filter((item) => item.product)
+    .map((item) => ({
+      id: item.productId,
+      qty: item.quantity,
+      product: decorateProduct(item.product!),
+      lineTotal: (item.product?.price ?? 0) * item.quantity,
+    })),
 )
+
+const subtotal = computed(() => cart.total)
+const freeShip = computed(() => subtotal.value >= FREE_SHIP)
+const shipping = computed(() =>
+  subtotal.value === 0 || freeShip.value ? 0 : SHIPPING_FEE,
+)
+const remaining = computed(() => Math.max(0, FREE_SHIP - subtotal.value))
+const shipPct = computed(() =>
+  Math.min(100, Math.round((subtotal.value / FREE_SHIP) * 100)),
+)
+const grandTotal = computed(() => subtotal.value + shipping.value)
 
 const needs = uniqueNeeds(products)
 
-const modeMeta = computed(() =>
-  mode.value === 'with-webmcp'
-    ? {
-        label: 'With WebMCP',
-        tone: 'tool-enabled',
-        description: '註冊 catalog / cart tools，agent 可用工具完成選品。',
-      }
-    : {
-        label: 'Without WebMCP',
-        tone: 'ui-only',
-        description: '不註冊 tools，agent 只能透過畫面操作。',
-      },
-)
+// detail-page content (derived, on-brand placeholders)
+const detailIngredients = computed(() => {
+  const p = selectedProduct.value
+  if (!p) return []
+  const protein = p.name.includes('鮭')
+    ? '新鮮鮭魚'
+    : p.name.includes('羊')
+      ? '新鮮羊肉'
+      : p.name.includes('鴨')
+        ? '新鮮鴨肉'
+        : p.name.includes('火雞')
+          ? '新鮮火雞肉'
+          : p.petType === 'cat'
+            ? '新鮮魚肉'
+            : '新鮮雞肉'
+  return [
+    { name: protein, pct: '36%' },
+    { name: '馬鈴薯 / 鷹嘴豆', pct: '18%' },
+    { name: '豌豆纖維', pct: '12%' },
+    { name: '鮭魚油（Omega-3）', pct: '8%' },
+    { name: '蔓越莓・藍莓', pct: '5%' },
+    { name: '綜合維生素與礦物質', pct: '—' },
+    { name: '益生菌 + 益生元', pct: '—' },
+  ]
+})
+
+const detailHighlights = [
+  { icon: '🌾', title: '無穀低敏', sub: '不使用易致敏穀物，呵護敏感腸胃' },
+  { icon: '🍖', title: '真實肉塊', sub: '高含肉量，肉源清楚可追溯' },
+  { icon: '🔬', title: 'SGS 檢驗', sub: '每批次送驗，安心看得見' },
+]
+
+const detailFeeding = [
+  { w: '1 – 5 kg', g: '30 – 85 g' },
+  { w: '5 – 10 kg', g: '85 – 145 g' },
+  { w: '10 – 20 kg', g: '145 – 250 g' },
+  { w: '20 kg 以上', g: '每 10kg 加 60 g' },
+]
+
+const reviews = [
+  { name: '王小姐', pet: '柴犬・3 歲', avatar: '🐕', stars: '★★★★★', text: '換成這款後狗狗的便便變得很漂亮，毛色也亮亮的，一定會回購！' },
+  { name: '陳先生', pet: '美短・5 歲', avatar: '🐈', stars: '★★★★★', text: '家裡的挑嘴貓終於願意乖乖吃飯了，顆粒大小剛好。' },
+  { name: 'Lin', pet: '米克斯・2 歲', avatar: '🐩', stars: '★★★★☆', text: 'CP 值很高，出貨速度也很快，隔天就到了。' },
+]
+
+const detailTabs = [
+  { key: 'intro', label: '商品介紹' },
+  { key: 'ingredient', label: '成分分析' },
+  { key: 'feeding', label: '餵食建議' },
+  { key: 'review', label: '顧客評價' },
+] as const
+
+// ---- drawer data (real) ----
+const criteria = [
+  `petType: ${scenario.criteria.petType}`,
+  `category: ${scenario.criteria.category}`,
+  `lifeStage: ${scenario.criteria.lifeStage}`,
+  `need: ${scenario.criteria.needs.join(', ')}`,
+  `max: ${formatTwd(scenario.criteria.maxPrice)}`,
+  `rating ≥ ${scenario.criteria.minRating}`,
+  'inStock: true',
+  `quantity: ${scenario.expectedQuantity}`,
+]
 
 const summaryByMode = computed(() => {
   const modes: BenchmarkMode[] = ['with-webmcp', 'without-webmcp']
   return modes.map((itemMode) => {
     const runs = benchmark.history.value.filter((run) => run.mode === itemMode)
-    const successfulRuns = runs.filter((run) => run.success)
+    const successful = runs.filter((run) => run.success)
     return {
       mode: itemMode,
       runs: runs.length,
-      successRate: runs.length ? successfulRuns.length / runs.length : 0,
-      avgDuration: average(successfulRuns.map((run) => run.durationMs)),
-      avgUiActions: average(successfulRuns.map((run) => run.uiActionCount)),
-      avgToolCalls: average(successfulRuns.map((run) => run.toolCallCount)),
+      successRate: runs.length ? successful.length / runs.length : 0,
+      avgDuration: average(successful.map((r) => r.durationMs)),
+      avgUiActions: average(successful.map((r) => r.uiActionCount)),
+      avgToolCalls: average(successful.map((r) => r.toolCallCount)),
     }
   })
 })
 
-watch(filteredProducts, (items) => {
-  if (!items.some((product) => product.id === selectedProductId.value)) {
-    selectedProductId.value = items[0]?.id ?? products[0].id
-  }
+watch([view, selectedId], () => {
+  window.scrollTo({ top: 0, behavior: 'auto' })
 })
 
-function selectProduct(productId: string) {
-  selectedProductId.value = productId
+// 抽屜關著測試時，頁面常駐的錄製徽章：完成後短暫顯示結果再淡出
+const justCompleted = ref<BenchmarkRun | null>(null)
+let completedTimer = 0
+watch(benchmark.latestRun, (run) => {
+  if (!run) return
+  justCompleted.value = run
+  window.clearTimeout(completedTimer)
+  completedTimer = window.setTimeout(() => (justCompleted.value = null), 4000)
+})
+
+function fmtMs(value: number) {
+  return `${(value / 1000).toFixed(1)}s`
 }
 
-function addToCart(productId: string) {
-  if (cart.add(productId, 1)) benchmark.recordCartMutation(productId)
+// ---- handlers ----
+function toast(message: string) {
+  toastMsg.value = message
+  window.clearTimeout(toastTimer)
+  toastTimer = window.setTimeout(() => (toastMsg.value = ''), 1900)
 }
 
-function removeFromCart(productId: string) {
-  if (cart.remove(productId)) benchmark.recordCartMutation(null)
+function goHome() {
+  view.value = 'shop'
+  selectedId.value = null
+  resetFilters()
 }
 
-function clearCartForUser() {
-  if (cart.clear()) benchmark.recordCartMutation(null)
+function openCart() {
+  view.value = 'cart'
 }
 
-function armBenchmark() {
-  benchmark.arm()
+function selectProduct(id: string) {
+  selectedId.value = id
+  detailTab.value = 'intro'
+  detailQty.value = 1
+  view.value = 'product'
 }
 
-function resetDemo() {
-  benchmark.reset()
-  cart.clear()
+function setSpecies(petType: PetType | 'all') {
+  filters.petType = petType
+  view.value = 'shop'
+}
+
+function setCategory(category: ProductCategory | 'all') {
+  filters.category = category
+  view.value = 'shop'
+}
+
+function setLifeStage(lifeStage: LifeStage | 'all') {
+  filters.lifeStage = lifeStage
+}
+
+function toggleNeed(need: string) {
+  filters.needs = filters.needs.includes(need)
+    ? filters.needs.filter((n) => n !== need)
+    : [...filters.needs, need]
+}
+
+function submitSearch() {
+  filters.query = searchInput.value.trim()
+  view.value = 'shop'
+  selectedId.value = null
+}
+
+function clearSearch() {
+  filters.query = ''
+  searchInput.value = ''
+}
+
+function resetFilters() {
   Object.assign(filters, {
     query: '',
     petType: 'all',
     category: 'all',
     lifeStage: 'all',
     needs: [],
-    maxPrice: 1600,
+    maxPrice: 2000,
     minRating: 4.0,
     inStockOnly: false,
+    sort: 'recommend',
   })
-  selectedProductId.value = products[0].id
+  searchInput.value = ''
+}
+
+function addToCart(id: string, qty = 1) {
+  if (cart.add(id, qty)) {
+    benchmark.recordCartMutation(id)
+    const product = products.find((p) => p.id === id)
+    toast(`已加入購物車${product ? '：' + product.name : ''}`)
+  }
+}
+
+function buyNow(id: string, qty: number) {
+  addToCart(id, qty)
+  view.value = 'cart'
+}
+
+function updateCartQty(id: string, delta: number) {
+  if (cart.update(id, delta)) benchmark.recordCartMutation(null)
+}
+
+function removeFromCart(id: string) {
+  if (cart.remove(id)) benchmark.recordCartMutation(null)
+}
+
+function resetDemo() {
+  benchmark.reset()
+  cart.clear()
+  resetFilters()
+  selectedId.value = null
+  view.value = 'shop'
 }
 
 async function copyPrompt() {
   await navigator.clipboard.writeText(scenario.prompt)
   copied.value = true
-  await nextTick()
-  window.setTimeout(() => {
-    copied.value = false
-  }, 1400)
-}
-
-function toggleNeed(need: string, checked: boolean) {
-  filters.needs = checked
-    ? Array.from(new Set([...filters.needs, need]))
-    : filters.needs.filter((item) => item !== need)
-}
-
-function formatCurrency(value: number) {
-  return new Intl.NumberFormat('zh-TW', {
-    style: 'currency',
-    currency: 'TWD',
-    maximumFractionDigits: 0,
-  }).format(value)
-}
-
-function formatMs(value: number) {
-  if (!value) return '-'
-  return `${(value / 1000).toFixed(2)}s`
-}
-
-function formatPercent(value: number) {
-  return `${Math.round(value * 100)}%`
+  window.setTimeout(() => (copied.value = false), 1400)
 }
 
 function average(values: number[]) {
   if (!values.length) return 0
-  return Math.round(values.reduce((sum, value) => sum + value, 0) / values.length)
+  return Math.round(values.reduce((sum, v) => sum + v, 0) / values.length)
 }
 
-function categoryLabel(category: ProductCategory) {
-  return {
-    food: '主食',
-    supplement: '保健',
-    toy: '玩具',
-    cleaning: '清潔',
-    travel: '外出',
-  }[category]
-}
+const speciesChips: { key: PetType | 'all'; label: string }[] = [
+  { key: 'all', label: '全部' },
+  { key: 'dog', label: '🐶 狗狗' },
+  { key: 'cat', label: '🐱 貓咪' },
+]
 
-function lifeStageLabel(lifeStage: LifeStage) {
-  return {
-    puppy: '幼犬',
-    kitten: '幼貓',
-    adult: '成犬/貓',
-    senior: '熟齡',
-    all: '全年齡',
-  }[lifeStage]
-}
+const categoryChips: { key: ProductCategory | 'all'; label: string }[] = [
+  { key: 'all', label: '全部' },
+  ...(['food', 'supplement', 'toy', 'cleaning', 'travel'] as ProductCategory[]).map(
+    (key) => ({ key, label: CATEGORY_LABEL[key] }),
+  ),
+]
 
-function petTypeLabel(petType: PetType) {
-  return petType === 'dog' ? '犬' : '貓'
-}
+const lifeStageChips: { key: LifeStage | 'all'; label: string }[] = [
+  { key: 'all', label: '全部' },
+  ...(['puppy', 'kitten', 'adult', 'senior'] as LifeStage[]).map((key) => ({
+    key,
+    label: LIFE_STAGE_LABEL[key],
+  })),
+]
 
-function iconComponent(name: 'cart' | 'tool' | 'check'): Component {
-  return {
-    cart: ShoppingCart,
-    tool: Wrench,
-    check: CheckCircle2,
-  }[name]
-}
+const sortOptions = [
+  { key: 'recommend', label: '推薦排序' },
+  { key: 'priceAsc', label: '價格低→高' },
+  { key: 'priceDesc', label: '價格高→低' },
+  { key: 'rating', label: '評價最高' },
+]
 </script>
 
 <template>
-  <div class="app-shell">
-    <header class="topbar">
-      <div>
-        <p class="eyebrow">WebMCP Agent Benchmark</p>
-        <h1>Pet Commerce Selection Task</h1>
+  <div class="page">
+    <!-- promo -->
+    <div class="promo">🐾 {{ PROMO }}</div>
+
+    <!-- header -->
+    <header class="header">
+      <div class="header-bar">
+        <div class="brand" @click="goHome">
+          <div class="brand-mark">🐾</div>
+          <div class="brand-text">
+            <div class="brand-name">毛日子</div>
+            <div class="brand-en">FURDAYS</div>
+          </div>
+        </div>
+
+        <form class="search" @submit.prevent="submitSearch">
+          <input
+            v-model="searchInput"
+            data-benchmark-action="filter-query"
+            placeholder="搜尋飼料、保健、玩具…（試試「sensitive-stomach」）"
+          />
+          <button type="submit" data-benchmark-action="search-submit">搜尋</button>
+        </form>
+
+        <div class="header-actions">
+          <button class="member" type="button"><span>👤</span> 會員</button>
+          <button class="cart-btn" type="button" data-benchmark-action="open-cart" @click="openCart">
+            <span>🛒</span> 購物車
+            <span class="cart-count">{{ cart.count }}</span>
+          </button>
+        </div>
       </div>
 
-      <nav class="mode-tabs" aria-label="Benchmark mode">
-        <a
-          class="mode-tab"
-          :class="{ active: mode === 'with-webmcp' }"
-          href="?mode=with-webmcp"
-        >
-          With WebMCP
-        </a>
-        <a
-          class="mode-tab"
-          :class="{ active: mode === 'without-webmcp' }"
-          href="?mode=without-webmcp"
-        >
-          Without WebMCP
-        </a>
+      <nav class="catnav">
+        <button data-benchmark-action="nav-all" @click="goHome">全部商品</button>
+        <button data-benchmark-action="nav-dog" @click="setSpecies('dog')">🐶 狗狗專區</button>
+        <button data-benchmark-action="nav-cat" @click="setSpecies('cat')">🐱 貓咪專區</button>
+        <button data-benchmark-action="nav-food" @click="setCategory('food')">主食</button>
+        <button data-benchmark-action="nav-supp" @click="setCategory('supplement')">保健食品</button>
+        <button data-benchmark-action="nav-toy" @click="setCategory('toy')">玩具</button>
+        <span class="ship-hint">🚚 滿 {{ formatTwd(FREE_SHIP) }} 免運費</span>
       </nav>
     </header>
 
-    <main class="workspace">
-      <section class="benchmark-panel">
-        <div class="panel-header">
-          <div>
-            <p class="eyebrow">Current Mode</p>
-            <h2>{{ modeMeta.label }}</h2>
-            <p>{{ modeMeta.description }}</p>
-          </div>
-          <span class="mode-pill" :class="modeMeta.tone">{{ mode }}</span>
-        </div>
-
-        <div class="status-grid">
-          <div class="metric">
-            <component :is="iconComponent('tool')" />
-            <span>WebMCP</span>
-            <strong>{{ webMcp.statusMessage }}</strong>
-          </div>
-          <div class="metric">
-            <PackageCheck />
-            <span>Tools</span>
-            <strong>{{ webMcp.registeredToolCount }}</strong>
-          </div>
-          <div class="metric">
-            <component :is="iconComponent('cart')" />
-            <span>Cart</span>
-            <strong>{{ cart.count }}</strong>
-          </div>
-          <div class="metric">
-            <component :is="iconComponent('check')" />
-            <span>Run</span>
-            <strong>{{ benchmark.armed.value ? 'armed' : 'idle' }}</strong>
+    <!-- ============ SHOP ============ -->
+    <main v-if="view === 'shop'" class="wrap">
+      <section v-if="!searchActive" class="hero">
+        <div class="hero-blob a"></div>
+        <div class="hero-blob b"></div>
+        <div class="hero-copy">
+          <div class="hero-pill">🐾 新鮮直送・產地嚴選</div>
+          <h1>給毛孩每一天的<br />好食光 🍖</h1>
+          <p>無穀低敏、看得見的真實肉塊。從幼犬到熟齡貓，毛日子都為牠們準備好營養滿分的鮮食。</p>
+          <div class="hero-cta">
+            <button class="hero-primary" data-benchmark-action="nav-dog" @click="setSpecies('dog')">🐶 逛狗狗專區</button>
+            <button class="hero-ghost" data-benchmark-action="nav-cat" @click="setSpecies('cat')">🐱 逛貓咪專區</button>
           </div>
         </div>
-
-        <p v-if="webMcp.errorMessage" class="inline-error">
-          {{ webMcp.errorMessage }}
-        </p>
-
-        <div class="task-box">
-          <div>
-            <p class="eyebrow">Scenario</p>
-            <h3>{{ scenario.title }}</h3>
-            <p>{{ scenario.prompt }}</p>
-          </div>
-          <button
-            type="button"
-            class="icon-button"
-            data-benchmark-action="copy-prompt"
-            :aria-label="copied ? 'Prompt copied' : 'Copy prompt'"
-            :title="copied ? 'Copied' : 'Copy prompt'"
-            @click="copyPrompt"
-          >
-            <CheckCircle2 v-if="copied" />
-            <Clipboard v-else />
-          </button>
+        <div class="hero-bags">
+          <div class="hero-bag cat"><div class="hero-bag-lip"></div><div class="hero-bag-mark">🐱<span>FURDAYS</span></div><div class="hero-bag-plate">鮮魚無穀貓糧</div></div>
+          <div class="hero-bag dog"><div class="hero-bag-lip"></div><div class="hero-bag-mark">🐶<span>FURDAYS</span></div><div class="hero-bag-plate">鮮雞無穀犬糧</div></div>
         </div>
-
-        <div class="criteria-grid">
-          <span>petType: dog</span>
-          <span>category: food</span>
-          <span>lifeStage: adult</span>
-          <span>need: sensitive-stomach</span>
-          <span>max: NT$1,200</span>
-          <span>rating >= 4.6</span>
-          <span>inStock: true</span>
-          <span>quantity: 1</span>
-        </div>
-
-        <div class="run-controls">
-          <button
-            type="button"
-            class="primary-button"
-            data-benchmark-action="arm"
-            @click="armBenchmark"
-          >
-            <Play />
-            Arm
-          </button>
-          <button
-            type="button"
-            class="secondary-button"
-            data-benchmark-action="reset"
-            @click="resetDemo"
-          >
-            <RefreshCw />
-            Reset
-          </button>
-          <button
-            type="button"
-            class="secondary-button"
-            data-benchmark-action="export"
-            @click="benchmark.exportJson"
-          >
-            Export JSON
-          </button>
-        </div>
-
-        <div class="live-strip">
-          <span>timer {{ formatMs(benchmark.liveDurationMs.value) }}</span>
-          <span>ui {{ benchmark.uiActionCount.value }}</span>
-          <span>tools {{ benchmark.toolCallCount.value }}</span>
-          <span>cart mutations {{ benchmark.cartMutationCount.value }}</span>
-        </div>
-
-        <section class="result-block">
-          <h3>Latest Result</h3>
-          <p v-if="!benchmark.latestRun.value" class="muted">No completed run</p>
-          <dl v-else class="result-grid">
-            <div>
-              <dt>success</dt>
-              <dd>{{ benchmark.latestRun.value.success ? 'true' : 'false' }}</dd>
-            </div>
-            <div>
-              <dt>duration</dt>
-              <dd>{{ formatMs(benchmark.latestRun.value.durationMs) }}</dd>
-            </div>
-            <div>
-              <dt>ui actions</dt>
-              <dd>{{ benchmark.latestRun.value.uiActionCount }}</dd>
-            </div>
-            <div>
-              <dt>tool calls</dt>
-              <dd>{{ benchmark.latestRun.value.toolCallCount }}</dd>
-            </div>
-            <div>
-              <dt>selected</dt>
-              <dd>{{ benchmark.latestRun.value.selectedProductId }}</dd>
-            </div>
-          </dl>
-        </section>
-
-        <section class="comparison-block">
-          <h3>History Comparison</h3>
-          <table>
-            <thead>
-              <tr>
-                <th>mode</th>
-                <th>runs</th>
-                <th>success</th>
-                <th>avg time</th>
-                <th>avg UI</th>
-                <th>avg tools</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr v-for="row in summaryByMode" :key="row.mode">
-                <td>{{ row.mode }}</td>
-                <td>{{ row.runs }}</td>
-                <td>{{ formatPercent(row.successRate) }}</td>
-                <td>{{ formatMs(row.avgDuration) }}</td>
-                <td>{{ row.avgUiActions || '-' }}</td>
-                <td>{{ row.avgToolCalls || '-' }}</td>
-              </tr>
-            </tbody>
-          </table>
-        </section>
       </section>
 
-      <section class="catalog-area">
-        <div class="toolbar">
-          <label class="search-field">
-            <Search />
-            <input
-              v-model="filters.query"
-              data-benchmark-action="filter-query"
-              type="search"
-              placeholder="Search products, needs, tags"
-            />
-          </label>
+      <div v-if="searchActive" class="search-head">
+        <h2>搜尋「<span>{{ filters.query }}</span>」</h2>
+        <span class="muted">找到 {{ visibleProducts.length }} 件商品</span>
+        <button class="clear-search" data-benchmark-action="clear-search" @click="clearSearch">✕ 清除搜尋</button>
+      </div>
 
-          <div class="toolbar-count">
-            <SlidersHorizontal />
-            {{ filteredProducts.length }} / {{ products.length }}
+      <div class="shop-grid">
+        <!-- filters -->
+        <aside class="filters">
+          <div class="filters-head">
+            <div class="filters-title">⚙️ 篩選</div>
+            <button data-benchmark-action="clear-filters" @click="resetFilters">清除</button>
+          </div>
+
+          <div class="filter-label">寵物</div>
+          <div class="chips">
+            <button
+              v-for="o in speciesChips"
+              :key="o.key"
+              class="chip"
+              :class="{ active: filters.petType === o.key }"
+              data-benchmark-action="filter-pet"
+              @click="setSpecies(o.key)"
+            >{{ o.label }}</button>
+          </div>
+
+          <div class="filter-label">商品類型</div>
+          <div class="chips">
+            <button
+              v-for="o in categoryChips"
+              :key="o.key"
+              class="chip"
+              :class="{ active: filters.category === o.key }"
+              data-benchmark-action="filter-category"
+              @click="setCategory(o.key)"
+            >{{ o.label }}</button>
+          </div>
+
+          <div class="filter-label">生命階段</div>
+          <div class="chips">
+            <button
+              v-for="o in lifeStageChips"
+              :key="o.key"
+              class="chip"
+              :class="{ active: filters.lifeStage === o.key }"
+              data-benchmark-action="filter-life-stage"
+              @click="setLifeStage(o.key)"
+            >{{ o.label }}</button>
+          </div>
+
+          <div class="filter-label">需求特色</div>
+          <div class="chips">
+            <button
+              v-for="need in needs"
+              :key="need"
+              class="chip"
+              :class="{ active: filters.needs.includes(need) }"
+              data-benchmark-action="filter-need"
+              @click="toggleNeed(need)"
+            >{{ needLabel(need) }}</button>
+          </div>
+
+          <div class="filter-label spread">
+            價格上限 <span class="accent">{{ formatTwd(filters.maxPrice) }}</span>
+          </div>
+          <input
+            v-model.number="filters.maxPrice"
+            data-benchmark-action="filter-price"
+            type="range"
+            min="200"
+            max="2000"
+            step="100"
+            class="range"
+          />
+          <div class="range-ends"><span>NT$200</span><span>NT$2,000</span></div>
+
+          <div class="filter-label spread">
+            評分下限 <span class="accent">{{ filters.minRating.toFixed(1) }}★</span>
+          </div>
+          <input
+            v-model.number="filters.minRating"
+            data-benchmark-action="filter-rating"
+            type="range"
+            min="4"
+            max="5"
+            step="0.1"
+            class="range"
+          />
+
+          <label class="stock-toggle">
+            <input
+              v-model="filters.inStockOnly"
+              data-benchmark-action="filter-stock"
+              type="checkbox"
+            />
+            只看有現貨
+          </label>
+        </aside>
+
+        <!-- grid -->
+        <div>
+          <div class="grid-toolbar">
+            <div class="muted">共 <strong>{{ visibleProducts.length }}</strong> 件商品</div>
+            <label class="sort">
+              排序
+              <select v-model="filters.sort" data-benchmark-action="sort">
+                <option v-for="o in sortOptions" :key="o.key" :value="o.key">{{ o.label }}</option>
+              </select>
+            </label>
+          </div>
+
+          <div v-if="visibleProducts.length" class="cards">
+            <ProductCard
+              v-for="p in visibleProducts"
+              :key="p.id"
+              :product="p"
+              @select="selectProduct"
+              @add="addToCart($event)"
+            />
+          </div>
+          <div v-else class="empty">
+            <div class="empty-icon">🐾</div>
+            <div class="empty-title">找不到符合的商品</div>
+            <p>試試調整篩選條件，或看看其他熱銷品項</p>
+            <button class="solid" data-benchmark-action="clear-filters" @click="resetFilters">重設條件</button>
+          </div>
+        </div>
+      </div>
+    </main>
+
+    <!-- ============ PRODUCT DETAIL ============ -->
+    <main v-else-if="view === 'product' && selectedProduct" class="wrap narrow">
+      <div class="crumb">
+        <span @click="goHome">首頁</span><span>›</span>
+        <span @click="setSpecies(selectedProduct.petType)">{{ selectedProduct.petTypeLabel }}專區</span><span>›</span>
+        <span class="cur">{{ selectedProduct.name }}</span>
+      </div>
+
+      <div class="detail">
+        <div class="gallery">
+          <div class="gallery-stage" :style="{ background: selectedProduct.tone }">
+            <span v-if="selectedProduct.badge" class="badge" :class="{ muted: !selectedProduct.inStock }">{{ selectedProduct.badge }}</span>
+            <div class="bag big" :style="{ background: selectedProduct.bagColor }">
+              <div class="bag-lip" :style="{ background: selectedProduct.bagColor2 }"></div>
+              <div class="bag-mark"><div class="bag-icon">{{ selectedProduct.icon }}</div><div class="bag-brand">FURDAYS</div></div>
+              <div class="bag-plate">{{ selectedProduct.shortName }}</div>
+            </div>
           </div>
         </div>
 
-        <div class="content-grid">
-          <aside class="filters">
-            <h2>Filters</h2>
+        <div class="info">
+          <div class="info-tags">
+            <span v-for="t in selectedProduct.tags" :key="t">{{ t }}</span>
+          </div>
+          <h1>{{ selectedProduct.name }}</h1>
+          <div class="info-rating">
+            <span class="stars">★★★★★</span>
+            <strong>{{ selectedProduct.rating.toFixed(1) }}</strong>
+            <span class="muted">・ 已售 {{ selectedProduct.reviews }}＋</span>
+          </div>
 
-            <label>
-              Pet
-              <select v-model="filters.petType" data-benchmark-action="filter-pet">
-                <option value="all">All</option>
-                <option value="dog">Dog</option>
-                <option value="cat">Cat</option>
-              </select>
-            </label>
+          <div class="price-box">
+            <span class="cur">NT$</span><span class="num">{{ selectedProduct.priceStr }}</span>
+          </div>
 
-            <label>
-              Category
-              <select
-                v-model="filters.category"
-                data-benchmark-action="filter-category"
-              >
-                <option value="all">All</option>
-                <option value="food">Food</option>
-                <option value="supplement">Supplement</option>
-                <option value="toy">Toy</option>
-                <option value="cleaning">Cleaning</option>
-                <option value="travel">Travel</option>
-              </select>
-            </label>
+          <div class="spec-label">規格</div>
+          <div class="specs">
+            <span class="spec on">{{ selectedProduct.lifeStageLabel }}</span>
+            <span class="spec">{{ selectedProduct.categoryLabel }}</span>
+            <span class="spec" :class="{ off: !selectedProduct.inStock }">{{ selectedProduct.inStock ? '現貨' : '補貨中' }}</span>
+          </div>
 
-            <label>
-              Life Stage
-              <select
-                v-model="filters.lifeStage"
-                data-benchmark-action="filter-life-stage"
-              >
-                <option value="all">All</option>
-                <option value="puppy">Puppy</option>
-                <option value="kitten">Kitten</option>
-                <option value="adult">Adult</option>
-                <option value="senior">Senior</option>
-              </select>
-            </label>
-
-            <label>
-              Max Price
-              <input
-                v-model.number="filters.maxPrice"
-                data-benchmark-action="filter-price"
-                type="number"
-                min="0"
-                step="50"
-              />
-            </label>
-
-            <label>
-              Min Rating
-              <input
-                v-model.number="filters.minRating"
-                data-benchmark-action="filter-rating"
-                type="number"
-                min="0"
-                max="5"
-                step="0.1"
-              />
-            </label>
-
-            <label class="check-row">
-              <input
-                v-model="filters.inStockOnly"
-                data-benchmark-action="filter-stock"
-                type="checkbox"
-              />
-              In stock only
-            </label>
-
-            <div class="need-list">
-              <span>Needs</span>
-              <label v-for="need in needs" :key="need" class="check-row">
-                <input
-                  type="checkbox"
-                  data-benchmark-action="filter-need"
-                  :checked="filters.needs.includes(need)"
-                  @change="
-                    toggleNeed(need, ($event.target as HTMLInputElement).checked)
-                  "
-                />
-                {{ need }}
-              </label>
+          <div class="qty-row">
+            <div class="spec-label inline">數量</div>
+            <div class="stepper">
+              <button data-benchmark-action="detail-qty-dec" @click="detailQty = Math.max(1, detailQty - 1)">−</button>
+              <div>{{ detailQty }}</div>
+              <button data-benchmark-action="detail-qty-inc" @click="detailQty += 1">＋</button>
             </div>
-          </aside>
+          </div>
 
-          <section class="product-list" aria-label="Products">
-            <article
-              v-for="product in filteredProducts"
-              :key="product.id"
-              class="product-card"
-              :class="{ selected: product.id === selectedProduct.id }"
-            >
-              <button
-                type="button"
-                class="product-select"
-                data-benchmark-action="select-product"
-                @click="selectProduct(product.id)"
-              >
-                <span class="product-title">{{ product.name }}</span>
-                <span class="product-price">{{ formatCurrency(product.price) }}</span>
-              </button>
-
-              <p>{{ product.summary }}</p>
-
-              <div class="tag-row">
-                <span>{{ petTypeLabel(product.petType) }}</span>
-                <span>{{ categoryLabel(product.category) }}</span>
-                <span>{{ lifeStageLabel(product.lifeStage) }}</span>
-                <span>{{ product.rating.toFixed(1) }}</span>
-                <span :class="product.inStock ? 'stock-ok' : 'stock-out'">
-                  {{ product.inStock ? 'In stock' : 'Out' }}
-                </span>
-              </div>
-
-              <div class="need-row">
-                <span v-for="need in product.needs" :key="need">{{ need }}</span>
-              </div>
-
-              <button
-                type="button"
-                class="add-button"
-                data-benchmark-action="add-to-cart"
-                :disabled="!product.inStock"
-                @click="addToCart(product.id)"
-              >
-                <ShoppingCart />
-                Add to cart
-              </button>
-            </article>
-          </section>
-
-          <aside class="details-pane">
-            <h2>Product Detail</h2>
-            <h3>{{ selectedProduct.name }}</h3>
-            <p>{{ selectedProduct.details }}</p>
-            <dl>
-              <div>
-                <dt>ID</dt>
-                <dd>{{ selectedProduct.id }}</dd>
-              </div>
-              <div>
-                <dt>Price</dt>
-                <dd>{{ formatCurrency(selectedProduct.price) }}</dd>
-              </div>
-              <div>
-                <dt>Rating</dt>
-                <dd>{{ selectedProduct.rating.toFixed(1) }}</dd>
-              </div>
-              <div>
-                <dt>Stock</dt>
-                <dd>{{ selectedProduct.inStock ? 'true' : 'false' }}</dd>
-              </div>
-            </dl>
-
+          <div class="buy-row">
             <button
-              type="button"
-              class="primary-button full-width"
+              class="add-cart"
               data-benchmark-action="detail-add-to-cart"
               :disabled="!selectedProduct.inStock"
-              @click="addToCart(selectedProduct.id)"
-            >
-              <ShoppingCart />
-              Add Selected
-            </button>
+              @click="addToCart(selectedProduct.id, detailQty)"
+            >🛒 加入購物車</button>
+            <button
+              class="buy-now"
+              data-benchmark-action="detail-buy-now"
+              :disabled="!selectedProduct.inStock"
+              @click="buyNow(selectedProduct.id, detailQty)"
+            >直接購買</button>
+          </div>
 
-            <section class="cart-block">
-              <div class="cart-header">
-                <h2>Cart</h2>
-                <button
-                  type="button"
-                  class="icon-button"
-                  data-benchmark-action="clear-cart"
-                  aria-label="Clear cart"
-                  title="Clear cart"
-                  @click="clearCartForUser"
-                >
-                  <Trash2 />
-                </button>
-              </div>
-
-              <p v-if="cart.lineItems.length === 0" class="muted">Cart is empty</p>
-              <div
-                v-for="item in cart.lineItems"
-                :key="item.productId"
-                class="cart-line"
-              >
-                <span>{{ item.product?.name }}</span>
-                <strong>x{{ item.quantity }}</strong>
-                <button
-                  type="button"
-                  class="text-button"
-                  data-benchmark-action="remove-cart-item"
-                  @click="removeFromCart(item.productId)"
-                >
-                  Remove
-                </button>
-              </div>
-              <div class="cart-total">
-                <span>Total</span>
-                <strong>{{ formatCurrency(cart.total) }}</strong>
-              </div>
-            </section>
-          </aside>
+          <div class="perks">
+            <div><span>🚚</span> 滿 {{ formatTwd(FREE_SHIP) }} 免運費，最快隔日到貨</div>
+            <div><span>↩️</span> 7 天鑑賞期，毛孩不愛可退換</div>
+            <div><span>🛡️</span> 原廠正品保證・通過 SGS 檢驗</div>
+          </div>
         </div>
-      </section>
+      </div>
+
+      <div class="tabs">
+        <button
+          v-for="t in detailTabs"
+          :key="t.key"
+          :class="{ active: detailTab === t.key }"
+          data-benchmark-action="detail-tab"
+          @click="detailTab = t.key"
+        >{{ t.label }}</button>
+      </div>
+
+      <div class="tab-panel">
+        <template v-if="detailTab === 'intro'">
+          <p class="intro-desc">{{ selectedProduct.details }}</p>
+          <div class="highlights">
+            <div v-for="h in detailHighlights" :key="h.title" class="highlight">
+              <div class="h-icon">{{ h.icon }}</div>
+              <div class="h-title">{{ h.title }}</div>
+              <div class="h-sub">{{ h.sub }}</div>
+            </div>
+          </div>
+        </template>
+        <template v-else-if="detailTab === 'ingredient'">
+          <div class="panel-title">成分組成（前 7 大原料）</div>
+          <div class="ingredients">
+            <div v-for="ing in detailIngredients" :key="ing.name" class="ingredient">
+              <span class="dot"></span><span class="ing-name">{{ ing.name }}</span><span class="ing-pct">{{ ing.pct }}</span>
+            </div>
+          </div>
+          <div class="panel-note">✔ 無添加人工色素、香料與防腐劑　✔ 不使用 4D 肉類　✔ 低敏配方</div>
+        </template>
+        <template v-else-if="detailTab === 'feeding'">
+          <div class="panel-title">每日建議餵食量</div>
+          <div class="feeding">
+            <div class="feeding-head"><div>體重</div><div>每日份量</div></div>
+            <div v-for="f in detailFeeding" :key="f.w" class="feeding-row"><div>{{ f.w }}</div><div>{{ f.g }}</div></div>
+          </div>
+          <div class="panel-note light">※ 以上為參考值，請依毛孩活動量、年齡與體態微調。換糧建議以 7 天漸進方式混合。</div>
+        </template>
+        <template v-else>
+          <div class="review-summary">
+            <div class="review-score"><div class="big">{{ selectedProduct.rating.toFixed(1) }}</div><div class="stars">★★★★★</div></div>
+            <div class="muted">超過 {{ selectedProduct.reviews }} 位毛爸毛媽的真實評價<br />98% 願意再次回購</div>
+          </div>
+          <div class="reviews">
+            <div v-for="r in reviews" :key="r.name" class="review">
+              <div class="avatar">{{ r.avatar }}</div>
+              <div>
+                <div class="review-meta"><strong>{{ r.name }}</strong><span class="muted">{{ r.pet }}</span><span class="stars">{{ r.stars }}</span></div>
+                <div class="review-text">{{ r.text }}</div>
+              </div>
+            </div>
+          </div>
+        </template>
+      </div>
+
+      <div class="section-title">毛孩也喜歡 🐾</div>
+      <div class="cards four">
+        <ProductCard
+          v-for="p in relatedProducts"
+          :key="p.id"
+          :product="p"
+          @select="selectProduct"
+          @add="addToCart($event)"
+        />
+      </div>
     </main>
+
+    <!-- ============ CART ============ -->
+    <main v-else-if="view === 'cart'" class="wrap narrow">
+      <h1 class="cart-title">🛒 購物車</h1>
+
+      <div v-if="cartLines.length === 0" class="empty">
+        <div class="empty-icon">🐱</div>
+        <div class="empty-title">購物車是空的</div>
+        <p>帶毛孩最愛的鮮食回家吧！</p>
+        <button class="solid" @click="goHome">去逛逛 →</button>
+      </div>
+
+      <div v-else class="cart-grid">
+        <div class="cart-lines">
+          <div v-for="line in cartLines" :key="line.id" class="cart-line">
+            <div class="line-thumb" :style="{ background: line.product.tone }">{{ line.product.icon }}</div>
+            <div class="line-info">
+              <div class="line-name">{{ line.product.name }}</div>
+              <div class="muted">{{ line.product.categoryLabel }} ・ 單價 {{ formatTwd(line.product.price) }}</div>
+            </div>
+            <div class="stepper sm">
+              <button data-benchmark-action="cart-qty-dec" @click="updateCartQty(line.id, -1)">−</button>
+              <div>{{ line.qty }}</div>
+              <button data-benchmark-action="cart-qty-inc" @click="updateCartQty(line.id, 1)">＋</button>
+            </div>
+            <div class="line-total">{{ formatTwd(line.lineTotal) }}</div>
+            <button class="line-remove" data-benchmark-action="remove-cart-item" @click="removeFromCart(line.id)">✕</button>
+          </div>
+        </div>
+
+        <aside class="summary">
+          <div class="summary-title">訂單摘要</div>
+          <div class="ship-meter">
+            <div v-if="freeShip" class="ship-ok">🎉 已達免運門檻！</div>
+            <div v-else class="ship-need">再買 <span>{{ formatTwd(remaining) }}</span> 即可免運 🚚</div>
+            <div class="meter"><div class="meter-fill" :style="{ width: shipPct + '%' }"></div></div>
+          </div>
+          <div class="summary-row"><span>商品小計</span><strong>{{ formatTwd(subtotal) }}</strong></div>
+          <div class="summary-row"><span>運費</span><strong>{{ shipping === 0 ? '免費' : formatTwd(shipping) }}</strong></div>
+          <div class="summary-sep"></div>
+          <div class="summary-total"><span>應付總額</span><strong>{{ formatTwd(grandTotal) }}</strong></div>
+          <button class="checkout">前往結帳 →</button>
+          <div class="pays"><span>VISA</span><span>Master</span><span>LINE Pay</span><span>7-11 取貨</span></div>
+        </aside>
+      </div>
+
+      <template v-if="cartLines.length && recommendProducts.length">
+        <div class="section-title sm">推薦加購 🛍️</div>
+        <div class="cards three">
+          <ProductCard
+            v-for="p in recommendProducts"
+            :key="p.id"
+            :product="p"
+            @select="selectProduct"
+            @add="addToCart($event)"
+          />
+        </div>
+      </template>
+    </main>
+
+    <!-- footer -->
+    <footer class="footer">
+      <div class="footer-grid">
+        <div>
+          <div class="footer-brand"><div class="brand-mark sm">🐾</div><div>毛日子 FURDAYS</div></div>
+          <p>用對待家人的心，為每隻毛孩準備新鮮、安心、營養均衡的每一餐。</p>
+        </div>
+        <div><div class="footer-col-title">關於毛日子</div><span>品牌故事</span><span>製程與檢驗</span><span>門市據點</span></div>
+        <div><div class="footer-col-title">購物指南</div><span>運送與付款</span><span>退換貨政策</span><span>常見問題</span></div>
+        <div><div class="footer-col-title">訂閱毛日子</div><p>新會員首購享 9 折優惠</p></div>
+      </div>
+      <div class="footer-bottom">
+        <span>© 2026 毛日子 FURDAYS. 此為 WebMCP 效能展示用 Demo 網站。</span>
+        <span>隱私權政策 ・ 服務條款</span>
+      </div>
+    </footer>
+
+    <!-- recording badge (visible with drawer closed) -->
+    <Transition name="rec">
+      <button
+        v-if="benchmark.armed.value || justCompleted"
+        class="rec-badge"
+        :class="{
+          live: benchmark.armed.value && benchmark.liveDurationMs.value > 0,
+          standby: benchmark.armed.value && benchmark.liveDurationMs.value === 0,
+          done: !benchmark.armed.value && justCompleted,
+          fail: !benchmark.armed.value && justCompleted && !justCompleted.success,
+        }"
+        title="開啟 Agent 效能對比"
+        @click="drawerOpen = true"
+      >
+        <template v-if="benchmark.armed.value">
+          <span class="rec-dot"></span>
+          <span class="rec-text">{{ benchmark.liveDurationMs.value > 0 ? 'REC' : '待命' }}</span>
+          <span class="rec-time">{{ fmtMs(benchmark.liveDurationMs.value) }}</span>
+        </template>
+        <template v-else-if="justCompleted">
+          <span class="rec-icon">{{ justCompleted.success ? '✓' : '■' }}</span>
+          <span class="rec-text">{{ justCompleted.success ? '完成' : '結束' }}</span>
+          <span class="rec-time">{{ fmtMs(justCompleted.durationMs) }}</span>
+        </template>
+      </button>
+    </Transition>
+
+    <!-- floating benchmark button -->
+    <button class="bench-fab" data-benchmark-action="open-benchmark" @click="drawerOpen = true">
+      <span class="fab-icon">🤖</span> Agent 效能對比
+    </button>
+
+    <BenchmarkDrawer
+      :open="drawerOpen"
+      :mode="mode"
+      :scenario-title="scenario.title"
+      :scenario-prompt="scenario.prompt"
+      :criteria="criteria"
+      :webmcp-status="webMcp.statusMessage.value"
+      :webmcp-available="webMcp.isAvailable.value"
+      :webmcp-error="webMcp.errorMessage.value"
+      :tool-count="webMcp.registeredToolCount.value"
+      :armed="benchmark.armed.value"
+      :live-ms="benchmark.liveDurationMs.value"
+      :ui-actions="benchmark.uiActionCount.value"
+      :tool-calls="benchmark.toolCallCount.value"
+      :cart-mutations="benchmark.cartMutationCount.value"
+      :tool-log="benchmark.toolCalls.value"
+      :latest-run="benchmark.latestRun.value"
+      :summary="summaryByMode"
+      :copied="copied"
+      @close="drawerOpen = false"
+      @arm="benchmark.arm"
+      @reset="resetDemo"
+      @export="benchmark.exportJson"
+      @copy="copyPrompt"
+    />
+
+    <!-- toast -->
+    <Transition name="toast">
+      <div v-if="toastMsg" class="toast">✅ {{ toastMsg }}</div>
+    </Transition>
   </div>
 </template>
