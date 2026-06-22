@@ -27,7 +27,7 @@ export const products: Product[] = [
     petType: 'dog',
     category: 'food',
     lifeStage: 'adult',
-    needs: ['sensitive-stomach', 'daily-nutrition', 'grain-free'],
+    needs: ['sensitive-stomach', 'daily-nutrition', 'grain-free', 'single-protein'],
     price: 1080,
     rating: 4.8,
     inStock: true,
