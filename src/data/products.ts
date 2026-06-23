@@ -8,7 +8,7 @@ export const scenario: BenchmarkScenario = {
   expectedProductId: EXPECTED_PRODUCT_ID,
   expectedQuantity: 1,
   prompt:
-    '我家柴犬剛換成犬糧一直軟便，獸醫說試試看單一蛋白來源的無穀成犬主食，要有現貨，預算 1100 以內，加一包看看。',
+    '我家狗腸胃敏感，幫我找一款成犬主食，要有現貨、預算 1200 以內，評分越高越好，加一包到購物車就好。',
   criteria: {
     petType: 'dog',
     category: 'food',
@@ -21,21 +21,6 @@ export const scenario: BenchmarkScenario = {
 }
 
 export const products: Product[] = [
-  {
-    id: EXPECTED_PRODUCT_ID,
-    name: 'Canine Gentle Digest 成犬低敏主食',
-    petType: 'dog',
-    category: 'food',
-    lifeStage: 'adult',
-    needs: ['sensitive-stomach', 'daily-nutrition', 'grain-free', 'single-protein'],
-    price: 1080,
-    rating: 4.8,
-    inStock: true,
-    tags: ['正解商品', '主食', '成犬', '低敏'],
-    summary: '單一蛋白與益生元配方，鎖定腸胃敏感成犬日常主食。',
-    details:
-      '使用鮭魚單一動物蛋白、菊苣纖維與益生元，降低換食負擔並維持穩定排便。符合預算、評分與現貨條件。',
-  },
   {
     id: 'dog-active-adult-chicken-kibble',
     name: 'Active Trail 成犬雞肉高蛋白糧',
@@ -161,6 +146,21 @@ export const products: Product[] = [
     tags: ['幼貓', '主食'],
     summary: '幼貓成長營養。',
     details: '幼貓主食，不符合 benchmark。',
+  },
+  {
+    id: EXPECTED_PRODUCT_ID,
+    name: 'Canine Gentle Digest 成犬低敏主食',
+    petType: 'dog',
+    category: 'food',
+    lifeStage: 'adult',
+    needs: ['sensitive-stomach', 'daily-nutrition', 'grain-free'],
+    price: 1080,
+    rating: 4.8,
+    inStock: true,
+    tags: ['正解商品', '主食', '成犬', '低敏'],
+    summary: '單一蛋白與益生元配方，鎖定腸胃敏感成犬日常主食。',
+    details:
+      '使用鮭魚單一動物蛋白、菊苣纖維與益生元，降低換食負擔並維持穩定排便。符合預算、評分與現貨條件。',
   },
   {
     id: 'dog-probiotic-soft-chews',
