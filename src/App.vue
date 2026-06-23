@@ -49,7 +49,7 @@ let toastTimer = 0
 const searchInput = ref('')
 const filters = reactive({
   query: '',
-  petType: 'all' as PetType | 'all',
+  petType: 'cat' as PetType | 'all',
   category: 'all' as ProductCategory | 'all',
   lifeStage: 'all' as LifeStage | 'all',
   needs: [] as string[],
