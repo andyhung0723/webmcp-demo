@@ -8,9 +8,13 @@
       content="Amz+8girppRsER/CuMV6UEcz/Pc3Es6EHwlTor7bdxUov1I5QKdlKL7foIxy0gVTtbuWMGfLd4U80KbULgw0pgIAAABpeyJvcmlnaW4iOiJodHRwczovL2FuZHlodW5nMDcyMy5naXRodWIuaW86NDQzIiwiZmVhdHVyZSI6IldlYk1DUCIsImV4cGlyeSI6MTc5NDg3MzYwMCwiaXNTdWJkb21haW4iOnRydWV9"
     />
     <title>WebMCP Pet Commerce Benchmark</title>
+    <!-- WebMCP shim: must run before the app registers tools. -->
+    <script src="/webmcp-shim.js"></script>
   </head>
   <body>
     <div id="app"></div>
     <script type="module" src="/src/main.ts"></script>
+    <!-- Backend-agent bridge (floating panel). Remove these two lines to revert. -->
+    <script src="/webmcp-bridge.js"></script>
   </body>
 </html>

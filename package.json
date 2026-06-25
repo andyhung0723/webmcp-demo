@@ -6,14 +6,17 @@
   "scripts": {
     "dev": "vite --host 0.0.0.0",
     "build": "vue-tsc -b && vite build",
-    "preview": "vite preview --host 0.0.0.0"
+    "preview": "vite preview --host 0.0.0.0",
+    "backend": "node server/index.mjs"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": ">=0.30.0",
     "@lucide/vue": "^1.17.0",
     "@vitejs/plugin-vue": "^5.2.4",
     "pinia": "^2.3.1",
     "vite": "^6.0.7",
-    "vue": "^3.5.13"
+    "vue": "^3.5.13",
+    "ws": ">=8.0.0"
   },
   "devDependencies": {
     "typescript": "^5.7.2",
