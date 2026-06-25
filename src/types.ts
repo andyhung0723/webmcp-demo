@@ -1,4 +1,4 @@
-export type BenchmarkMode = 'with-webmcp' | 'without-webmcp'
+export type BenchmarkMode = 'with-webmcp' | 'without-webmcp' | 'backend'
 export type PetType = 'dog' | 'cat'
 export type ProductCategory =
   | 'food'

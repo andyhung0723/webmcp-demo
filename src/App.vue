@@ -27,11 +27,12 @@ const FREE_SHIP = 1200
 const SHIPPING_FEE = 60
 const PROMO = '全館滿 NT$1,200 免運 ・ 新會員首購享 9 折'
 
-const mode = computed<BenchmarkMode>(() =>
-  new URLSearchParams(window.location.search).get('mode') === 'without-webmcp'
-    ? 'without-webmcp'
-    : 'with-webmcp',
-)
+const mode = computed<BenchmarkMode>(() => {
+  const m = new URLSearchParams(window.location.search).get('mode')
+  if (m === 'without-webmcp') return 'without-webmcp'
+  if (m === 'backend') return 'backend'
+  return 'with-webmcp'
+})
 
 const cart = useCartStore()
 
@@ -84,7 +85,8 @@ const benchmark = useBenchmark({
 })
 
 const webMcp = useWebMcpTools({
-  enabled: mode.value === 'with-webmcp',
+  // Tools are needed both for the browser-agent demo and the backend-bridge demo.
+  enabled: mode.value !== 'without-webmcp',
   products,
   cart,
   recordCartMutation: benchmark.recordCartMutation,

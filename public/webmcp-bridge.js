@@ -13,13 +13,16 @@
     /^(localhost|127\.|0\.0\.0\.0|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|\[?::1\]?$)/.test(pageHost);
   if (!isLocal) return;
 
+  // Only the "backend" demo mode mounts the panel + dials the backend.
+  if (new URLSearchParams(location.search).get("mode") !== "backend") return;
+
   const BACKEND = (window.__WEBMCP_BACKEND__ || "http://localhost:5174").replace(/\/$/, "");
   const WS_URL = BACKEND.replace(/^http/, "ws");
 
   // --- floating panel, isolated from the app via shadow DOM --------------
 
   const host = document.createElement("div");
-  host.style.cssText = "position:fixed;right:16px;bottom:16px;z-index:2147483647;";
+  host.style.cssText = "position:fixed;left:16px;bottom:16px;z-index:2147483647;";
   document.body.appendChild(host);
   const root = host.attachShadow({ mode: "open" });
   root.innerHTML = `

@@ -39,6 +39,12 @@ const emit = defineEmits<{
   'update:scenarioConfig': [config: ScenarioConfig];
 }>();
 
+// 後端 Agent 模式需要本機後端（server/index.mjs），只在 localhost 提供切換
+const isLocal = computed(() => {
+  const h = location.hostname
+  return h === 'localhost' || h === '127.0.0.1' || /^(10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/.test(h)
+})
+
 // ---- scenario editing ----
 const editing = ref(false)
 const draft = ref<ScenarioConfig>({ ...props.scenarioConfig })
@@ -128,7 +134,22 @@ const liveLabel = computed(() => (props.armed ? '量測進行中…' : '待命')
               <span class="bd-dot mcp"></span>
               <div>
                 <div class="bd-mode-name">WebMCP 模式</div>
-                <div class="bd-mode-desc">頁面公開結構化工具，Agent 直接呼叫</div>
+                <div class="bd-mode-desc">頁面公開結構化工具，瀏覽器 Agent 直接呼叫</div>
+              </div>
+            </a>
+            <a
+              v-if="isLocal"
+              class="bd-mode mcp"
+              :class="{ active: mode === 'backend' }"
+              href="?mode=backend"
+            >
+              <span class="bd-tag">Backend</span>
+              <span class="bd-dot mcp"></span>
+              <div>
+                <div class="bd-mode-name">後端 Agent 模式</div>
+                <div class="bd-mode-desc">
+                  伺服器端 LLM 經 WebSocket 轉接，呼叫本頁 WebMCP 工具（需 <code>npm run backend</code>）
+                </div>
               </div>
             </a>
           </div>
